@@ -5,6 +5,7 @@ import random
 screen = t.Screen()
 screen.setup(width=600, height=600)
 screen.bgcolor("Dark blue")
+screen.bgpic("chess.gif")
 screen.title("Robot Target Chase - Equal Speed")
 screen.tracer(0) 
 
@@ -35,9 +36,11 @@ target.dest_y = random.randint(-250, 250)
 
 # ---------------- ROBOT ----------------
 robot = t.Turtle()
-robot.shape("square")
+screen.addshape("Zoomba2.gif")
+robot.shape("circle")
 robot.color("yellow")
 robot.penup()
+robot.shape("Zoomba2.gif")
 
 # ---------------- SPEED CONSTANT ----------------
 # Change this one number to speed up or slow down BOTH at once
