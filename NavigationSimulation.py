@@ -32,10 +32,12 @@ def move_target():
     x = random.randint(-250, 250)
     y = random.randint(-250, 250)
     target.goto(x, y)
+    
+
 
 # ---------------- ROBOT ----------------
 robot = t.Turtle()
-robot.shape("triangle")
+robot.shape("square")
 robot.color("yellow")
 robot.penup()
 robot.speed(0)
@@ -60,8 +62,8 @@ def move_robot():
     screen.ontimer(move_robot, 40)
 
 # ---------------- START GAME ----------------
-update_score()
-move_target()
-move_robot()
+# update_score()
+# move_target()
+# move_robot()
 
-screen.mainloop()
+# screen.mainloop()
