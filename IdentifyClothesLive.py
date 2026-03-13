@@ -5,7 +5,7 @@ import webcolors
 
 def get_color_name(rgb_triplet):
     try:
-        # Convert RGB to Name directly if it's an exact match
+        
         return webcolors.rgb_to_name(rgb_triplet)
     except ValueError:
         # If no exact match, we manually find the 'closest' color
