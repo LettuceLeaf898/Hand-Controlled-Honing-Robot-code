@@ -19,7 +19,7 @@ def get_color_name(rgb_triplet):
             standard_rgb = webcolors.name_to_rgb(name)
 
             # Euclidean distance between your color and the standard color
-            dist = ( (standard_rgb.red - rgb_triplet[0])**2 + 
+            dist = ( (standard_rgb.red - rgb_triplet[0])**2 + q
                      (standard_rgb.green - rgb_triplet[1])**2 + 
                      (standard_rgb.blue - rgb_triplet[2])**2 )
 
