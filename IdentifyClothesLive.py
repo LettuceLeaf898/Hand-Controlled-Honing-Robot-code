@@ -58,12 +58,12 @@ def apply_clahe(frame):
     return cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
 
 
-
+"""
 def identify_clothing(frame, model):
-    """
+    
     Processes a single frame, detects people, and labels their clothes.
     Returns the processed frame.
-    """
+    
     frame = cv2.convertScaleAbs(frame, alpha = 1.5, beta = 10)  # Ensure frame is in the right format for YOLO
     results = model(frame, verbose=False)[0]
     
@@ -110,8 +110,94 @@ def identify_clothing(frame, model):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
         
     return frame
+"""
+def identify_clothing(frame, model):
+    """
+    Processes a single frame, detects people, and counts only those 
+    whose full body is within the frame boundaries.
+    """
+    results = model(frame, verbose=False)[0]
+    h, w, _ = frame.shape
+    
+    # Padding/Margin: How close to the edge can they be? 
+    # Using a small buffer (e.g., 5 pixels) is more reliable than 0.
+    margin = 5 
+    full_body_count = 0
+    
+    for box in results.boxes:
+        if int(box.cls.item()) != 0:  # Skip if not a person
+            continue
 
+        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
 
+        # --- FULL BODY CHECK ---
+        # A person is "Full Body" if their box is NOT touching the frame edges
+        is_full_body = (x1 > margin and y1 > margin and 
+                        x2 < (w - margin) and y2 < (h - margin))
+
+        if is_full_body:
+            full_body_count += 1
+            box_color = (0, 255, 0) # Green for fully in frame
+            status_text = "Full Body"
+        else:
+            box_color = (0, 0, 255) # Red for partially out of frame
+            status_text = "Partial"
+
+        # --- ROI COLOR LOGIC ---
+        # Ensure coordinates are clipped for the ROI crop to prevent crashes
+        y1_c, y2_c = max(0, y1), min(h, y2)
+        x1_c, x2_c = max(0, x1), min(w, x2)
+
+        person_height = y2_c - y1_c
+        head_gap = int(person_height * 0.2)
+        
+        # Slicing ROIs
+        shirt_roi = frame[y1_c + head_gap : y1_c + head_gap + person_height//3, x1_c : x2_c]
+        pants_roi = frame[y1_c + head_gap + person_height//2 : y2_c, x1_c : x2_c]
+        
+        s_name = get_color_name(get_dominant_color(shirt_roi)[::-1])
+        p_name = get_color_name(get_dominant_color(pants_roi)[::-1])
+
+        # --- DRAWING ---
+        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+        cv2.putText(frame, f"{status_text} | S: {s_name}", (x1, y1 - 25), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+        cv2.putText(frame, f"P: {p_name}", (x1, y1 - 5), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+        
+    return frame, full_body_count
+model = YOLO("yolov8n.pt")
+cap = cv2.VideoCapture(0)
+
+# Define a static counting ROI [x1, y1, x2, y2]
+# This puts a box in the middle of the screen
+zone_area = [100, 100, 500, 450] 
+
+while True:
+    ret, frame = cap.read()
+    if not ret: break
+
+    # 1. Process frame and get count
+    processed_frame, count = identify_clothing(frame, model)
+
+    # 2. Draw the Static ROI Zone on screen (Cyan box)
+    cv2.rectangle(processed_frame, (zone_area[0], zone_area[1]), 
+                 (zone_area[2], zone_area[3]), (255, 255, 0), 2)
+    
+    # 3. Display the total count in the corner
+    cv2.rectangle(processed_frame, (10, 10), (220, 50), (0, 0, 0), -1) # Black background for text
+    cv2.putText(processed_frame, f"People in ROI: {count}", (20, 40), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+    cv2.imshow("Live AI Detection", processed_frame)
+    
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+"""
 model = YOLO("yolov8n.pt")
 cap = cv2.VideoCapture(0)
 
@@ -130,3 +216,4 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
+"""
