@@ -157,7 +157,7 @@ class KeyboardDriveClient:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Keyboard teleop client for car server (WASD)")
-    parser.add_argument("--host", default="10.25.68.108", help="Car server host")
+    parser.add_argument("--host", default="10.42.0.1", help="Car server host")
     parser.add_argument("--port", type=int, default=5001, help="Car server port")
     parser.add_argument(
         "--interval",
