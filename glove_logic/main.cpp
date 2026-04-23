@@ -13,7 +13,7 @@ const char* ssid = "JoshuaiPhone"; // or "eduroam"
 const char* eap_password = "123456789";         // Your university password
 
 // --- Pi Socket ---
-const char* PI_IP   = "172.20.10.6";
+const char* PI_IP   = "100.70.33.84";
 const uint16_t PI_PORT = 5000;
 
 // --- Global Objects ---
