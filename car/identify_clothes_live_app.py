@@ -1,6 +1,9 @@
 import os
+import queue
 import socket
+import subprocess
 import sys
+import threading
 import time
 
 import cv2
@@ -10,6 +13,78 @@ from ultralytics import YOLO
 
 
 WINDOW_NAME = "Live AI Detection"
+WIDTH = 320
+HEIGHT = 240
+PORT = 5000
+
+
+class FFmpegLatestFrameSource:
+    def __init__(self, stream_url):
+        self.stream_url = stream_url
+        self.width = WIDTH
+        self.height = HEIGHT
+        self.frame_size = WIDTH * HEIGHT * 3
+        self.latest = queue.Queue(maxsize=1)
+        self.proc = None
+        self.reader_thread = None
+        self.running = False
+
+    def start(self):
+        cmd = [
+            "ffmpeg",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-i",
+            self.stream_url,
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-",
+        ]
+
+        self.proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=10**8,
+        )
+        self.running = True
+        self.reader_thread = threading.Thread(target=self._reader, daemon=True)
+        self.reader_thread.start()
+
+    def _reader(self):
+        if self.proc is None or self.proc.stdout is None:
+            raise RuntimeError("ffmpeg stdout unavailable")
+
+        while self.running:
+            raw = self.proc.stdout.read(self.frame_size)
+            if len(raw) != self.frame_size:
+                continue
+
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3)).copy()
+
+            if self.latest.full():
+                try:
+                    self.latest.get_nowait()
+                except queue.Empty:
+                    pass
+
+            self.latest.put(frame)
+
+    def read(self, timeout=1.0):
+        try:
+            return True, self.latest.get(timeout=timeout), None
+        except queue.Empty:
+            return False, None, f"No frame received for {timeout:.1f}s from {self.stream_url}."
+
+    def release(self):
+        self.running = False
+        if self.proc is not None:
+            self.proc.terminate()
+            self.proc = None
 
 
 def get_color_name(rgb_triplet):
@@ -86,27 +161,37 @@ def extract_host_from_stream_url(stream_url):
 class LiveClothesTrackerApp:
     def __init__(
         self,
-        stream_url="tcp://10.25.68.108:5000",
+        stream_url="udp://0.0.0.0:5000",
         model_path="yolov8n.pt",
-        car_host=None,
+        car_host="10.42.0.1",
         car_port=5001,
+        command_repeat_interval=0.1,
     ):
         self.stream_url = stream_url
         self.model = YOLO(model_path)
         self.car_host = car_host or extract_host_from_stream_url(stream_url)
         self.car_port = car_port
+        self.command_repeat_interval = command_repeat_interval
         self.zone_area = [100, 100, 500, 450]
         self.latest_detections = []
         self.latest_frame = None
+        self.frame_source = None
         self.tracker = None
         self.tracking_label = None
         self.tracking_box = None
         self.tracking_active = False
         self.car_socket = None
         self.last_sent_command = None
+        self.last_command_sent_at = 0.0
         self.last_connect_attempt = 0.0
 
     def open_low_latency_capture(self):
+        if self.stream_url.startswith("udp://"):
+            source = FFmpegLatestFrameSource(f"udp://0.0.0.0:{PORT}")
+            source.start()
+            self.frame_source = source
+            return source
+
         os.environ.setdefault(
             "OPENCV_FFMPEG_CAPTURE_OPTIONS",
             "fflags;nobuffer|flags;low_delay|avioflags;direct|probesize;32|analyzeduration;0",
@@ -119,9 +204,12 @@ class LiveClothesTrackerApp:
         return cap
 
     def read_latest_frame(self, cap):
+        if isinstance(cap, FFmpegLatestFrameSource):
+            return cap.read(timeout=1.0)
+
         ret, frame = cap.read()
         if not ret:
-            return ret, frame
+            return False, frame, "OpenCV VideoCapture returned no frame."
 
         for _ in range(2):
             if not cap.grab():
@@ -131,7 +219,7 @@ class LiveClothesTrackerApp:
                 break
             frame = next_frame
 
-        return True, frame
+        return True, frame, None
 
     def stop_tracking(self):
         self.tracker = None
@@ -169,7 +257,15 @@ class LiveClothesTrackerApp:
 
     def send_car_command(self, cmd):
         cmd = cmd.strip().upper()
-        if not cmd or cmd == self.last_sent_command:
+        if not cmd:
+            return
+
+        now = time.time()
+        is_repeat_too_soon = (
+            cmd == self.last_sent_command
+            and (now - self.last_command_sent_at) < self.command_repeat_interval
+        )
+        if is_repeat_too_soon:
             return
 
         if not self.connect_car_server():
@@ -182,6 +278,7 @@ class LiveClothesTrackerApp:
         try:
             sock.sendall(f"{cmd}\n".encode("utf-8"))
             self.last_sent_command = cmd
+            self.last_command_sent_at = now
         except OSError:
             self.close_car_socket()
 
@@ -308,20 +405,28 @@ class LiveClothesTrackerApp:
         return "move right"
 
     def run(self):
+        exit_reason = "Unknown reason"
         cap = self.open_low_latency_capture()
-        if not cap.isOpened():
+        if isinstance(cap, FFmpegLatestFrameSource):
+            if cap.proc is None:
+                print(f"Error: could not open stream {self.stream_url}", file=sys.stderr)
+                raise SystemExit(1)
+        elif not cap.isOpened():
             print(f"Error: could not open stream {self.stream_url}", file=sys.stderr)
             raise SystemExit(1)
 
         print(f"Car command target: {self.car_host}:{self.car_port}")
+        print(f"Video source: {self.stream_url}")
+        print("Press Q to quit, S to stop tracking.")
 
-        cv2.namedWindow(WINDOW_NAME)
+
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
         cv2.setMouseCallback(WINDOW_NAME, self.on_mouse)
 
         while True:
-            ret, frame = self.read_latest_frame(cap)
+            ret, frame, frame_error = self.read_latest_frame(cap)
             if not ret:
-                break
+                continue
 
             self.latest_frame = frame
             processed_frame, count = self.identify_clothing(frame)
@@ -404,21 +509,33 @@ class LiveClothesTrackerApp:
                 2,
             )
 
+            frame_height, frame_width = processed_frame.shape[:2]
+            cv2.resizeWindow(WINDOW_NAME, frame_width, frame_height)
             cv2.imshow(WINDOW_NAME, processed_frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
+                exit_reason = "User pressed Q"
                 break
             if key in (ord("s"), ord("S")):
                 self.stop_tracking()
                 self.send_car_command("S")
+                print("Tracking stopped by user (S key).")
 
         self.send_car_command("S")
         self.close_car_socket()
-        cap.release()
+        if isinstance(cap, FFmpegLatestFrameSource):
+            cap.release()
+        else:
+            cap.release()
         cv2.destroyAllWindows()
+        print(f"Application closed: {exit_reason}")
 
 
 def main():
     app = LiveClothesTrackerApp()
     app.run()
+
+
+if __name__ == "__main__":
+    main()

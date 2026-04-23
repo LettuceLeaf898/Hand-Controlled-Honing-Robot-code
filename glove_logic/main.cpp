@@ -13,8 +13,8 @@ const char* ssid = "JoshuaiPhone"; // or "eduroam"
 const char* eap_password = "123456789";         // Your university password
 
 // --- Pi Socket ---
-const char* PI_IP   = "172.20.10.8";
-const uint16_t PI_PORT = 5001;
+const char* PI_IP   = "172.20.10.6";
+const uint16_t PI_PORT = 5000;
 
 // --- Global Objects ---
 BNO080 bno;
@@ -23,14 +23,9 @@ WiFiClient piClient;
 
 // --- Cached Sensor Data ---
 float roll = 0, pitch = 0, yaw = 0;
-float yawRef = 0;
-bool yawInitialized = false;
-int mode = 0;
 String lastCmd = "";
 
 unsigned long ota_progress_millis = 0;
-unsigned long lastSendMillis = 0;
-const unsigned long SEND_INTERVAL = 100;
 
 // --- OTA Callbacks ---
 void onOTAStart() {
@@ -108,11 +103,7 @@ String getCommand() {
   else if (pitch < -20) return "B";
   else if (roll > 20)   return "R";
   else if (roll < -20)  return "L";
-  else {
-    float delta = yaw - yawRef;
-    if (delta > 20 || delta < -20)  return "C"; // Clockwise
-    return "S";
-  }
+  else                  return "S";
 }
 
 void loop() {
@@ -125,31 +116,12 @@ void loop() {
     roll  = bno.getRoll()  * 180.0 / PI;
     pitch = bno.getPitch() * 180.0 / PI;
     yaw   = bno.getYaw()   * 180.0 / PI;
-    if (!yawInitialized) {
-      yawRef = yaw;
-      yawInitialized = true;
-    }
-    Serial.printf("Roll: %.1f  Pitch: %.1f  Yaw: %.1f  YawRef: %.1f\n", roll, pitch, yaw, yawRef);
   }
 
-  // 3. Send command to Pi
+  // 3. Send command to Pi if it changed
   String cmd = getCommand();
-
-  // In mode 1, ignore all commands except C
-  if (mode == 1 && cmd != "C") cmd = "S";
-
-  // Toggle mode when C is detected
-  if (cmd == "C" && cmd != lastCmd) {
-    mode = (mode == 0) ? 1 : 0;
-    Serial.printf("Mode switched to %d\n", mode);
-  }
-
-  bool directionChanged = (cmd != lastCmd);
-  bool shouldSend = directionChanged || (cmd != "S" && cmd != "C" && millis() - lastSendMillis >= SEND_INTERVAL);
-
-  if (shouldSend) {
+  if (cmd != lastCmd) {
     lastCmd = cmd;
-    lastSendMillis = millis();
     if (!piClient.connected()) {
       piClient.connect(PI_IP, PI_PORT);
     }
