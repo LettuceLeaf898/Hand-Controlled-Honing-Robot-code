@@ -7,13 +7,11 @@
 #include <ElegantOTA.h>
 
 // --- WiFi Credentials ---
-//const char* ssid = "JoshuaiPhone"; // or "eduroam"
-//const char* eap_password = "123456789";         // Your university password
-const char* ssid = "Accolade"; // or "eduroam"
-const char* eap_password = "CrossPhloxIguana";         // Your university password
+const char* ssid = "piHotspot";
+const char* eap_password = "empanada";
 
 // --- Pi Socket ---
-const char* PI_IP   = "172.20.10.8";
+const char* PI_IP   = "10.42.0.1";
 const uint16_t PI_PORT = 5001;
 
 // --- Global Objects ---
@@ -31,6 +29,50 @@ String lastCmd = "";
 unsigned long ota_progress_millis = 0;
 unsigned long lastSendMillis = 0;
 const unsigned long SEND_INTERVAL = 100;
+unsigned long lastWifiReconnectAttempt = 0;
+const unsigned long WIFI_RECONNECT_INTERVAL = 5000;
+unsigned long lastPiReconnectAttempt = 0;
+const unsigned long PI_RECONNECT_INTERVAL = 2000;
+
+String wifiStatusToString(wl_status_t status) {
+  switch (status) {
+    case WL_NO_SHIELD:       return "NO_SHIELD";
+    case WL_IDLE_STATUS:     return "IDLE";
+    case WL_NO_SSID_AVAIL:   return "NO_SSID";
+    case WL_SCAN_COMPLETED:  return "SCAN_DONE";
+    case WL_CONNECTED:       return "CONNECTED";
+    case WL_CONNECT_FAILED:  return "CONNECT_FAILED";
+    case WL_CONNECTION_LOST: return "CONNECTION_LOST";
+    case WL_DISCONNECTED:    return "DISCONNECTED";
+    default:                 return "UNKNOWN";
+  }
+}
+
+bool connectToWiFi(unsigned long timeoutMs = 30000) {
+  Serial.printf("Connecting to SSID: \"%s\"\n", ssid);
+  WiFi.begin(ssid, eap_password);
+
+  unsigned long startAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < timeoutMs) {
+    delay(500);
+    wl_status_t s = WiFi.status();
+    if (s == WL_NO_SSID_AVAIL) {
+      Serial.printf("  Status: NO_SSID (target \"%s\" disappeared after scan)\n", ssid);
+    } else if (s == WL_CONNECT_FAILED) {
+      Serial.printf("  Status: CONNECT_FAILED (bad password for \"%s\"?)\n", ssid);
+    } else {
+      Serial.printf("  Status: %s\n", wifiStatusToString(s).c_str());
+    }
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+    return true;
+  }
+
+  Serial.printf("WiFi connect failed. Final status: %s\n", wifiStatusToString(WiFi.status()).c_str());
+  return false;
+}
 
 // --- OTA Callbacks ---
 void onOTAStart() {
@@ -59,35 +101,33 @@ void setup() {
   // 1. Initialize Sensor
   if (!bno.begin()) {
     Serial.println("BNO080 not detected. Check wiring!");
-    while (1); 
+    while (1);
   }
   Serial.println("BNO08x connected!");
   bno.enableRotationVector(50);
 
-  // 2. Initialize WiFi - Simplified for Hotspot
-  WiFi.disconnect(true); // Clear any old saved university settings
-  delay(1000);
+  // 2. Initialize WiFi
+  // Note: avoid WIFI_OFF -> WIFI_STA transition, it causes Error 263
+  // (ESP_ERR_WIFI_NOT_STARTED) on some Arduino core versions
   WiFi.mode(WIFI_STA);
-  
-  // Use the standard begin for a phone hotspot
-  WiFi.begin(ssid, eap_password); 
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.disconnect(false);
+  delay(1000);
+  WiFi.setSleep(false);
 
-  Serial.print("Connecting to Hotspot");
-  
-  // Timeout after 30 seconds so it doesn't loop forever
-  unsigned long startAttemptTime = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
-    delay(500);
-    Serial.print(".");
+  Serial.printf("ESP32 MAC: %s\n", WiFi.macAddress().c_str());
+
+  // Static IP to bypass DHCP timing issues
+  IPAddress local_IP(10, 42, 0, 200);
+  IPAddress gateway(10, 42, 0, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  IPAddress dns(10, 42, 0, 1);
+  if (!WiFi.config(local_IP, gateway, subnet, dns)) {
+    Serial.println("Static IP config failed!");
   }
-  
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\nFailed to connect. Check 'Maximize Compatibility' on iPhone.");
-  } else {
-    Serial.println("\nConnected!");
-    Serial.print("IP: ");
-    Serial.println(WiFi.localIP());
-  }
+
+  connectToWiFi();
 
   // 3. Initialize Web Server and OTA
   server.on("/", []() {
@@ -110,7 +150,7 @@ String getCommand() {
   else if (roll < -20)  return "L";
   else {
     float delta = yaw - yawRef;
-    if (delta > 20 || delta < -20)  return "C"; // Clockwise
+    if (delta > 20 || delta < -20) return "C";
     return "S";
   }
 }
@@ -119,6 +159,20 @@ void loop() {
   // 1. Keep the OTA web server running and listening
   server.handleClient();
   ElegantOTA.loop();
+
+  // Reconnect to WiFi automatically if hotspot drops
+  if (WiFi.status() != WL_CONNECTED) {
+    if (piClient.connected()) {
+      piClient.stop();
+    }
+    if (millis() - lastWifiReconnectAttempt >= WIFI_RECONNECT_INTERVAL) {
+      lastWifiReconnectAttempt = millis();
+      Serial.printf("WiFi lost (%s). Reconnecting...\n", wifiStatusToString(WiFi.status()).c_str());
+      connectToWiFi(10000);
+    }
+    delay(50);
+    return;
+  }
 
   // 2. Update cached sensor data
   if (bno.dataAvailable()) {
@@ -130,6 +184,17 @@ void loop() {
       yawInitialized = true;
     }
     Serial.printf("Roll: %.1f  Pitch: %.1f  Yaw: %.1f  YawRef: %.1f\n", roll, pitch, yaw, yawRef);
+  }
+
+  // Keep trying Pi socket connection even when command doesn't change
+  if (!piClient.connected() && millis() - lastPiReconnectAttempt >= PI_RECONNECT_INTERVAL) {
+    lastPiReconnectAttempt = millis();
+    Serial.printf("Connecting to Pi %s:%u ...\n", PI_IP, PI_PORT);
+    if (piClient.connect(PI_IP, PI_PORT)) {
+      Serial.println("Pi socket connected.");
+    } else {
+      Serial.println("Pi socket connect failed.");
+    }
   }
 
   // 3. Send command to Pi
@@ -147,15 +212,10 @@ void loop() {
   bool directionChanged = (cmd != lastCmd);
   bool shouldSend = directionChanged || (cmd != "S" && cmd != "C" && millis() - lastSendMillis >= SEND_INTERVAL);
 
-  if (shouldSend) {
+  if (shouldSend && piClient.connected()) {
+    piClient.println(cmd);
     lastCmd = cmd;
     lastSendMillis = millis();
-    if (!piClient.connected()) {
-      piClient.connect(PI_IP, PI_PORT);
-    }
-    if (piClient.connected()) {
-      piClient.println(cmd);
-      Serial.println("Sent: " + cmd);
-    }
+    Serial.println("Sent: " + cmd);
   }
 }
