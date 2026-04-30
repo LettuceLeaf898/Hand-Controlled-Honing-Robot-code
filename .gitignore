@@ -144,6 +144,30 @@ ENV/
 env.bak/
 venv.bak/
 
+# Python virtual environments
+.venv/
+venv/
+env/
+.venv_ros/
+**/.venv/
+**/venv/
+**/env/
+**/.venv_ros/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# PlatformIO build files
+.pio/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
 # Spyder project settings
 .spyderproject
 .spyproject

@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "../../../../Desktop/School/robotics/project1"
+		},
+		{
+			"name": "Test1",
+			"path": "."
+		}
+	],
+	"settings": {
+		"C_Cpp.default.configurationProvider": "platformio.platformio-ide",
+		"C_Cpp.default.compileCommands": "${workspaceFolder:Test1}/compile_commands.json"
+	}
+}
