@@ -7,13 +7,11 @@
 #include <ElegantOTA.h>
 
 // --- WiFi Credentials ---
-//const char* ssid = "JoshuaiPhone"; // or "eduroam"
-//const char* eap_password = "123456789";         // Your university password
-const char* ssid = "Nerdtown"; // or "eduroam"
-const char* eap_password = "LordOfTheGays0477";         // Your university password
+const char* ssid = "--------"; // username
+const char* eap_password = "----------";        //password
 
 // --- Pi Socket ---
-const char* PI_IP   = "192.168.40.48";
+const char* PI_IP   = "-----------"; //PI IP address
 const uint16_t PI_PORT = 5001;
 
 // --- Global Objects ---
@@ -65,11 +63,10 @@ void setup() {
   bno.enableRotationVector(50);
 
   // 2. Initialize WiFi - Simplified for Hotspot
-  WiFi.disconnect(true); // Clear any old saved university settings
+  WiFi.disconnect(true); 
   delay(1000);
   WiFi.mode(WIFI_STA);
   
-  // Use the standard begin for a phone hotspot
   WiFi.begin(ssid, eap_password); 
 
   Serial.print("Connecting to Hotspot");
@@ -135,7 +132,6 @@ void loop() {
   // 3. Send command to Pi
   String cmd = getCommand();
 
-  // In mode 1, ignore all commands except C
   if (mode == 1 && cmd != "C") cmd = "S";
 
   // Toggle mode when C is detected
